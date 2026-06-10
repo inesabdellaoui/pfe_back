@@ -7,16 +7,24 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-// ✅ Servir le dossier uploads comme fichiers statiques
+
+  // ✅ Servir les images d'inspection (uploads)
   app.useStaticAssets(
-  join('C:\\Users\\azus\\Desktop\\stage_PFE\\Tout\\ia-service\\shap_outputs'),
-  { prefix: '/shap' }
-);
- app.enableCors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-});
+    join('C:\\Users\\azus\\Desktop\\stage_PFE\\Tout\\backend\\backend-cuir\\uploads'),
+    { prefix: '/uploads' }
+  );
+
+  // ✅ Servir les cartes SHAP
+  app.useStaticAssets(
+    join('C:\\Users\\azus\\Desktop\\stage_PFE\\Tout\\ia-service\\shap_outputs'),
+    { prefix: '/shap' }
+  );
+
+  app.enableCors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

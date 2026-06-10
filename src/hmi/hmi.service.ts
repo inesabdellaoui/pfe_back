@@ -190,11 +190,13 @@ console.log(`[HMI] Redimensionnée : ${fs.statSync(resizedPath).size} octets`);
     try {
       const axios    = require('axios');
       const response = await axios.post('http://localhost:8000/predict', {
-        image_path   : imagePath,
-        id_piece     : id_piece,
-        generate_shap: true,
-      }, { timeout: 300000  });
+  image_path   : resizedPath,
+  id_piece     : id_piece,
+  generate_shap: true,
+}, { timeout: 300000 });
       iaResult = response.data;
+      console.log('[HMI] shap_image_path reçu :', iaResult.shap_image_path);
+console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
       console.log(`[HMI] ia-service répondu : ${iaResult.resultat} (conf=${iaResult.confidence})`);
     } catch (err: any) {
       console.error('[HMI] ia-service inaccessible :', err.message);
