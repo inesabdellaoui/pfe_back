@@ -1,4 +1,4 @@
-import { Controller, Get,Query  } from '@nestjs/common';
+import { Controller, Get,Query,Put, Delete } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import {Param } from '@nestjs/common';
 
@@ -111,7 +111,42 @@ async sendRapportMail(@Body() body: { pieceId: string; email: string }) {
   return this.dashboardService.sendRapportMail(body.pieceId, body.email);
 }
 
+// ─── Défauts ─────────────────────────────────────────
+@Get('defects-kpis')
+getDefectsKpis(@Query() query) {
+  return this.dashboardService.getDefectsKpis(query);
+}
+
+@Get('defects-by-severity')
+getDefectsBySeverity() {
+  return this.dashboardService.getDefectsBySeverity();
+}
+
+@Get('defects-trend')
+getDefectsTrend() {
+  return this.dashboardService.getDefectsTrend();
+}
+
+@Get('top-defects-by-lot')
+getTopDefectsLots() {
+  return this.dashboardService.getTopDefectsLots();
+}
 
 
 
+// ─── CRUD Lots ────────────────────────────────────────
+@Post('lots')
+createLot(@Body() body: any) {
+  return this.dashboardService.createLot(body);
+}
+
+@Put('lots/:id')
+updateLot(@Param('id') id: string, @Body() body: any) {
+  return this.dashboardService.updateLot(id, body);
+}
+
+@Delete('lots/:id')
+deleteLot(@Param('id') id: string) {
+  return this.dashboardService.deleteLot(id);
+}
 }

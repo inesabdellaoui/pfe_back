@@ -34,15 +34,18 @@ export class HmiController {
 
   // ── Inspection automatique ────────────────────────────────────
   @Post('inspection-auto')
-  async inspectionAuto(@Body() body: {
-    id_piece        : string,
-    id_grande_piece : string,
-    id_lot          : string,
-    id_operateur    : number,
-    id_session      : number,
-    image_base64    : string
-  }) {
-    return this.hmiService.inspectionAuto(body);
+  async inspectionAuto(@Body() body: any) {
+    try {
+      return await this.hmiService.inspectionAuto(body);
+    } catch (err) {
+      if (err.status === 404) {
+        return {
+          resultat : 'INTROUVABLE',
+          message  : err.message,
+        };
+      }
+      throw err;
+    }
   }
 
   // ── Résumé lot ────────────────────────────────────────────────
@@ -53,9 +56,7 @@ export class HmiController {
 
   // ── Fin grande pièce ──────────────────────────────────────────
   @Post('fin-grande-piece')
-  async finGrandePiece(@Body() body: {
-    id_grande_piece : string
-  }) {
+  async finGrandePiece(@Body() body: { id_grande_piece: string }) {
     return this.hmiService.finGrandePiece(body.id_grande_piece);
   }
 
@@ -63,5 +64,11 @@ export class HmiController {
   @Post('logout')
   async logout(@Body() body: { id_session: number }) {
     return this.hmiService.logoutOperateur(body.id_session);
+  }
+
+  // ── Historique opérateur ──────────────────────────────────────
+  @Get('historique/:id_operateur')
+  getHistorique(@Param('id_operateur') id: string) {
+    return this.hmiService.getHistoriqueOperateur(parseInt(id));
   }
 }

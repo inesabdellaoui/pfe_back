@@ -11,8 +11,7 @@ import { GrandePiece } from './entities/grande-piece.entity';
 import * as fs   from 'fs';
 import * as path from 'path';
 
-// Chemin absolu de l'image de test
-const TEST_IMAGE_PATH = 'C:\\Users\\azus\\Desktop\\stage_PFE\\Tout\\ia-service\\fff.jpg';
+const TEST_IMAGES_DIR = 'C:\\Users\\azus\\Desktop\\stage_PFE\\Tout\\ia-service\\test_images';
 
 @Injectable()
 export class HmiService {
@@ -61,10 +60,15 @@ export class HmiService {
     const result = await this.grandePieceRepo.query(
       `SELECT l.id_lot, l.statut_lot, l.date_reception,
               c.nom_client,
-              COUNT(gp.id_grande_piece) as nb_grandes_pieces
+              COUNT(DISTINCT gp.id_grande_piece) as nb_grandes_pieces,
+              COUNT(DISTINCT p.id_piece) as nb_pieces_total,
+              COUNT(CASE WHEN i.resultat = 'IO'  THEN 1 END) as nb_io,
+              COUNT(CASE WHEN i.resultat = 'NIO' THEN 1 END) as nb_nio
        FROM public.lot l
        LEFT JOIN public.client c ON c.id_client = l.id_client
        LEFT JOIN public.grande_piece gp ON gp.id_lot = l.id_lot
+       LEFT JOIN public.piece p ON p.id_lot = l.id_lot
+       LEFT JOIN public.inspection i ON i.id_piece = p.id_piece
        WHERE l.id_lot = $1
        GROUP BY l.id_lot, l.statut_lot, l.date_reception, c.nom_client`,
       [body.id_lot]
@@ -78,7 +82,10 @@ export class HmiService {
       nom_client        : lot.nom_client,
       statut_lot        : lot.statut_lot,
       date_reception    : lot.date_reception,
-      nb_grandes_pieces : parseInt(lot.nb_grandes_pieces)
+      nb_grandes_pieces : parseInt(lot.nb_grandes_pieces),
+      nb_pieces_total   : parseInt(lot.nb_pieces_total),
+      nb_io             : parseInt(lot.nb_io),
+      nb_nio            : parseInt(lot.nb_nio),
     };
   }
 
@@ -131,78 +138,90 @@ export class HmiService {
       await this.pieceRepo.save(piece);
     }
 
-    // ── 2. Préparer le chemin image ──────────────────────────────
+    // ── 2. Vérifier doublon ──────────────────────────────────────
+    const existingInspection = await this.inspectionRepo.findOne({
+      where: { id_piece: body.id_piece }
+    });
+    if (existingInspection) {
+      return {
+        resultat           : 'DOUBLON',
+        message            : `La pièce "${body.id_piece}" a déjà été inspectée (résultat : ${existingInspection.resultat})`,
+        id_piece           : body.id_piece,
+        resultat_precedent : existingInspection.resultat,
+        date_precedente    : existingInspection.date_inspection,
+      };
+    }
+
+    // ── 3. Vérifier capacité grande pièce ───────────────────────
+    const nbPiecesGP = await this.pieceRepo.count({
+      where: { id_grande_piece: body.id_grande_piece }
+    });
+
+    // ── 5. Préparer le chemin image ──────────────────────────────
     const date      = new Date().toISOString().slice(0, 10).replace(/-/g, path.sep);
     const uploadDir = path.resolve('uploads', 'inspections', ...date.split(path.sep));
     fs.mkdirSync(uploadDir, { recursive: true });
 
-    // Nom unique pour éviter les conflits
     const timestamp = Date.now();
     const imagePath = path.join(uploadDir, `${id_piece}_${timestamp}.jpg`);
 
-    // ── 3. Sauvegarder l'image ───────────────────────────────────
+    // ── 6. Sauvegarder l'image ───────────────────────────────────
     if (image_base64 && image_base64.length > 100) {
-      // Image réelle depuis caméra
       const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, '');
       fs.writeFileSync(imagePath, Buffer.from(base64Data, 'base64'));
       console.log(`[HMI] Image caméra sauvegardée (${fs.statSync(imagePath).size} octets)`);
-
     } else {
-      // Mode manuel — copier test.jpg
-      console.log(`[HMI] Mode manuel — tentative copie depuis : ${TEST_IMAGE_PATH}`);
-      console.log(`[HMI] test.jpg existe : ${fs.existsSync(TEST_IMAGE_PATH)}`);
-
-      if (fs.existsSync(TEST_IMAGE_PATH)) {
-        const testSize = fs.statSync(TEST_IMAGE_PATH).size;
-        console.log(`[HMI] test.jpg taille source : ${testSize} octets`);
-
-        if (testSize > 1000) {
-          // Copie avec vérification
-          const content = fs.readFileSync(TEST_IMAGE_PATH);
-          fs.writeFileSync(imagePath, content);
-          const copiedSize = fs.statSync(imagePath).size;
-          console.log(`[HMI] Copie réussie → destination : ${copiedSize} octets`);
-        } else {
-          console.error(`[HMI] test.jpg trop petite (${testSize} octets) — placez une vraie image`);
+      const extensions = ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG'];
+      let foundImage = '';
+      for (const ext of extensions) {
+        const candidate = path.join(TEST_IMAGES_DIR, `${id_piece}${ext}`);
+        if (fs.existsSync(candidate)) {
+          foundImage = candidate;
+          break;
         }
+      }
+      if (foundImage) {
+        console.log(`[HMI] Image trouvée : ${foundImage}`);
+        const content = fs.readFileSync(foundImage);
+        fs.writeFileSync(imagePath, content);
+        console.log(`[HMI] Copie réussie → ${fs.statSync(imagePath).size} octets`);
       } else {
-        console.error(`[HMI] test.jpg introuvable à : ${TEST_IMAGE_PATH}`);
+        console.error(`[HMI] Pièce introuvable : ${id_piece}`);
+        throw new NotFoundException(
+          `Pièce "${id_piece}" introuvable — vérifiez l'identifiant`
+        );
       }
     }
 
-    // Vérification finale
-    const finalSize = fs.existsSync(imagePath) ? fs.statSync(imagePath).size : 0;
     console.log(`[HMI] imagePath final : ${imagePath}`);
-    console.log(`[HMI] Taille finale   : ${finalSize} octets`);
+    console.log(`[HMI] Taille finale   : ${fs.statSync(imagePath).size} octets`);
 
-    // ── 3b. Redimensionner avant envoi IA ───────────────────────
-const sharp = require('sharp');
-const resizedPath = imagePath.replace('.jpg', '_s.jpg');
-await sharp(imagePath)
-  .resize(640, 640, { fit: 'inside', withoutEnlargement: true })
-  .jpeg({ quality: 80 })
-  .toFile(resizedPath);
-console.log(`[HMI] Redimensionnée : ${fs.statSync(resizedPath).size} octets`);
+    // ── 7. Redimensionner ────────────────────────────────────────
+    const sharp = require('sharp');
+    const resizedPath = imagePath.replace('.jpg', '_s.jpg');
+    await sharp(imagePath)
+      .resize(640, 640, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 80 })
+      .toFile(resizedPath);
+    console.log(`[HMI] Redimensionnée : ${fs.statSync(resizedPath).size} octets`);
 
-
-    // ── 4. Appeler le service IA ─────────────────────────────────
+    // ── 8. Appeler ia-service ────────────────────────────────────
     let iaResult: any;
     try {
       const axios    = require('axios');
       const response = await axios.post('http://localhost:8000/predict', {
-  image_path   : resizedPath,
-  id_piece     : id_piece,
-  generate_shap: true,
-}, { timeout: 300000 });
+        image_path   : resizedPath,
+        id_piece     : id_piece,
+        generate_shap: true,
+      }, { timeout: 300000 });
       iaResult = response.data;
       console.log('[HMI] shap_image_path reçu :', iaResult.shap_image_path);
-console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
       console.log(`[HMI] ia-service répondu : ${iaResult.resultat} (conf=${iaResult.confidence})`);
     } catch (err: any) {
       console.error('[HMI] ia-service inaccessible :', err.message);
       iaResult = {
         marque          : 'BMW',
-        resultat        : 'OK',
+        resultat        : 'IO',
         confidence      : 0.95,
         type_defaut     : null,
         gravite         : null,
@@ -215,7 +234,7 @@ console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
       };
     }
 
-    // ── 5. Sauvegarder l'inspection ──────────────────────────────
+    // ── 9. Sauvegarder inspection ────────────────────────────────
     const inspection = this.inspectionRepo.create({
       id_piece        : id_piece,
       date_inspection : new Date(),
@@ -231,7 +250,7 @@ console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
     } as any);
     const savedInspection = await this.inspectionRepo.save(inspection) as any;
 
-    // ── 6. Si NIO → sauvegarder le défaut ───────────────────────
+    // ── 10. Si NIO → sauvegarder défaut ─────────────────────────
     if (iaResult.resultat === 'NIO' && iaResult.type_defaut) {
       await this.inspectionRepo.query(
         `INSERT INTO public.defaut (id_inspection, type_defaut, gravite)
@@ -240,17 +259,17 @@ console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
       );
     }
 
-    // ── 7. Compteurs session ─────────────────────────────────────
+    // ── 11. Compteurs session ────────────────────────────────────
     await this.sessionRepo.increment(
       { id_session: body.id_session }, 'nb_inspections', 1
     );
-    if (iaResult.resultat === 'OK') {
+    if (iaResult.resultat === 'IO') {
       await this.sessionRepo.increment({ id_session: body.id_session }, 'nb_io', 1);
     } else {
       await this.sessionRepo.increment({ id_session: body.id_session }, 'nb_nio', 1);
     }
 
-    // ── 8. Retour HMI ────────────────────────────────────────────
+    // ── 12. Retour HMI ───────────────────────────────────────────
     return {
       id_inspection   : savedInspection.id_inspection,
       id_piece        : id_piece,
@@ -280,7 +299,7 @@ console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
     const result = await this.grandePieceRepo.query(
       `SELECT
          COUNT(i.id_inspection) as total,
-         COUNT(CASE WHEN i.resultat = 'OK'  THEN 1 END) as io,
+         COUNT(CASE WHEN i.resultat = 'IO'  THEN 1 END) as io,
          COUNT(CASE WHEN i.resultat = 'NIO' THEN 1 END) as nio
        FROM public.piece p
        LEFT JOIN public.inspection i ON i.id_piece = p.id_piece
@@ -302,7 +321,7 @@ console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
     const result = await this.grandePieceRepo.query(
       `SELECT
          COUNT(DISTINCT p.id_piece) as total_pieces,
-         COUNT(CASE WHEN i.resultat = 'OK'  THEN 1 END) as io,
+         COUNT(CASE WHEN i.resultat = 'IO'  THEN 1 END) as io,
          COUNT(CASE WHEN i.resultat = 'NIO' THEN 1 END) as nio,
          COUNT(DISTINCT gp.id_grande_piece) as nb_grandes_pieces,
          ROUND(
@@ -342,5 +361,28 @@ console.log('[HMI] iaResult complet :', JSON.stringify(iaResult));
       nb_io          : session.nb_io,
       nb_nio         : session.nb_nio
     };
+  }
+
+  // ── Historique opérateur ──────────────────────────────────────
+  async getHistoriqueOperateur(id_operateur: number) {
+    return this.sessionRepo.query(`
+      SELECT
+        s.id_session,
+        s.heure_debut,
+        s.heure_fin,
+        s.nb_inspections,
+        s.nb_io,
+        s.nb_nio,
+        ROUND(s.nb_nio::numeric / NULLIF(s.nb_inspections, 0) * 100, 1) AS mdr,
+        COUNT(DISTINCT p.id_lot) AS nb_lots,
+        STRING_AGG(DISTINCT p.id_lot, ', ') AS lots
+      FROM public.session_operateur s
+      LEFT JOIN public.inspection i ON i.id_operateur = s.id_session
+      LEFT JOIN public.piece p ON p.id_piece = i.id_piece
+      WHERE s.id_operateur = $1
+      GROUP BY s.id_session, s.heure_debut, s.heure_fin,
+               s.nb_inspections, s.nb_io, s.nb_nio
+      ORDER BY s.heure_debut DESC
+    `, [id_operateur]);
   }
 }

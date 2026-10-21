@@ -35,4 +35,7 @@ export class Inspection {
 
   @Column({ nullable: true })
   bbox_y: number;
+
+  @Column({ nullable: true })
+  shap_image_path: string;
 }
